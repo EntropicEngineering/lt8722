@@ -26,4 +26,5 @@ project(lt7822)
 
 target_sources(app PRIVATE
         src/main.c
+        src/lt8722.c
         )
