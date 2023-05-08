@@ -24,7 +24,13 @@ set(CMAKE_BUILD_TYPE ZDebug)
 
 project(lt7822)
 
+zephyr_library_compile_options(-std=gnu17)
+
 target_sources(app PRIVATE
         src/main.c
         src/lt8722.c
+        )
+
+target_include_directories(app PRIVATE
+        src
         )

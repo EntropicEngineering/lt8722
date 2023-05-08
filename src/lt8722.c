@@ -39,7 +39,20 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "lt8722.h"
 
-const uint8_t CRC_8_TABLE[256]{
+#include <errno.h>
+#include <stdint.h>
+#include <zephyr/device.h>
+#include <zephyr/drivers/spi.h>
+#include <zephyr/kernel.h>
+#include <zephyr/sys/printk.h>
+
+#define SPI_NODE DT_NODELABEL( spi1 )
+
+#define LT7822_SPI_MODE			0
+#define LT7822_DATA_XFER_SIZE	8
+#define LT7822_STATUS_XFER_SIZE 4
+
+static const uint8_t CRC_8_TABLE[256] = {
 	0x00, 0x07, 0x0E, 0x09, 0x1C, 0x1B, 0x12, 0x15, 0x38, 0x3F, 0x36, 0x31,
 	0x24, 0x23, 0x2A, 0x2D, 0x70, 0x77, 0x7E, 0x79, 0x6C, 0x6B, 0x62, 0x65,
 	0x48, 0x4F, 0x46, 0x41, 0x54, 0x53, 0x5A, 0x5D, 0xE0, 0xE7, 0xEE, 0xE9,
@@ -63,7 +76,14 @@ const uint8_t CRC_8_TABLE[256]{
 	0xDE, 0xD9, 0xD0, 0xD7, 0xC2, 0xC5, 0xCC, 0xCB, 0xE6, 0xE1, 0xE8, 0xEF,
 	0xFA, 0xFD, 0xF4, 0xF3 };
 
-uint8_t calc_crc( uint8_t* buffer, size_t len )
+static struct spi_dt_spec spec = {
+	.bus = DEVICE_DT_GET( SPI_NODE ),
+	.config =
+		SPI_CONFIG_DT( SPI_NODE, SPI_OP_MODE_MASTER | SPI_WORD_SET( 8 ), 0 ) };
+static uint8_t mosi_buffer[LT7822_DATA_XFER_SIZE] = { 0 };
+static uint8_t miso_buffer[LT7822_DATA_XFER_SIZE] = { 0 };
+
+static uint8_t calc_crc( uint8_t* buffer, size_t len )
 {
 	uint8_t result = 0;
 	for ( uint8_t i = 0; i < len; i++ )
@@ -71,4 +91,101 @@ uint8_t calc_crc( uint8_t* buffer, size_t len )
 		result = CRC_8_TABLE[( result ^ buffer[i] )];
 	}
 	return result;
+}
+
+lt7822_err_t lt7822_spi_ready( bool* ready )
+{
+	*ready = spi_is_ready_dt( &spec );
+	return 0;
+}
+
+static lt7822_err_t transceive( uint8_t ack, uint8_t crc )
+{
+	static struct spi_buf	  tx_buf = { .buf = mosi_buffer, .len = 0 };
+	static struct spi_buf	  rx_buf = { .buf = miso_buffer, .len = 0 };
+	static struct spi_buf_set tx_set = { .buffers = &tx_buf, .count = 1 };
+	static struct spi_buf_set rx_set = { .buffers = &rx_buf, .count = 1 };
+	int						  r;
+
+	r = spi_transceive_dt( &spec, &tx_set, &rx_set );
+	if ( r )
+	{
+		printk( "Transceive error: %d\n", -r );
+		return -r;
+	}
+
+	r = miso_buffer[ack];
+	if ( LT7822_ACK != r )
+	{
+		printk( "LT7822 ACK error: %02x\n", r );
+		return r ? r : 0xFF; /* Stuck at zero is error */
+	}
+
+	r = calc_crc( miso_buffer, crc );
+	if ( r != miso_buffer[crc] )
+	{
+		printk(
+			"CRC error: calculated %02x, received %02x\n", r,
+			miso_buffer[crc] );
+		return 0xFF;
+	}
+	return 0;
+}
+
+lt7822_err_t lt7822_spi_transact(
+	enum lt7822_command		  kind,
+	lt7822_status_register_t* status,
+	uint32_t*				  data,
+	enum lt7822_spi_address	  address )
+{
+	int err = 0;
+
+	switch ( kind )
+	{
+	case LT7822_STATUS_ACQUISITION:
+		tx_buf.len = rx_buf.len = LT7822_STATUS_XFER_SIZE;
+		memset( miso_buffer, 0, LT7822_STATUS_XFER_SIZE );
+		mosi_buffer[0] = LT7822_SQ;
+		mosi_buffer[1] = address;
+		mosi_buffer[2] = calc_crc( mosi_buffer, 2 );
+
+		err = transceive( 3, 2 );
+		break;
+	case LT7822_DATA_WRITE:
+		tx_buf.len = rx_buf.len = LT7822_DATA_XFER_SIZE;
+		memset( miso_buffer, 0, LT7822_DATA_XFER_SIZE );
+		mosi_buffer[0] = LT7822_DW;
+		mosi_buffer[1] = address;
+		// LT8277 spi is big-endian
+		mosi_buffer[2] = ( (uint8_t*) data )[3];
+		mosi_buffer[3] = ( (uint8_t*) data )[2];
+		mosi_buffer[4] = ( (uint8_t*) data )[1];
+		mosi_buffer[5] = ( (uint8_t*) data )[0];
+		mosi_buffer[6] = calc_crc( mosi_buffer, 6 );
+
+		err = transceive( 7, 2 );
+		break;
+	case LT7822_DATA_READ:
+		tx_buf.len = rx_buf.len = LT7822_DATA_XFER_SIZE;
+		memset( miso_buffer, 0, LT7822_DATA_XFER_SIZE );
+		mosi_buffer[0] = LT7822_DR;
+		mosi_buffer[1] = address;
+		mosi_buffer[2] = calc_crc( mosi_buffer, 2 );
+
+		err = transceive( 7, 6 );
+		if ( err )
+			break;
+
+		// LT8277 spi is big-endian
+		( (uint8_t*) data )[0] = miso_buffer[5];
+		( (uint8_t*) data )[1] = miso_buffer[4];
+		( (uint8_t*) data )[2] = miso_buffer[3];
+		( (uint8_t*) data )[3] = miso_buffer[2];
+		break;
+	}
+
+	// LT8277 spi is big-endian
+	( (uint8_t*) status )[0] = miso_buffer[1];
+	( (uint8_t*) status )[1] = miso_buffer[0];
+	return err;
 }
