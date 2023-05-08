@@ -68,15 +68,13 @@ typedef struct {
 	uint32_t SWEN		  : 1;
 } lt7822_status_register_t;
 
-typedef size_t lt7822_err_t;
-
 /**
  * Determine if SPI is ready and idle.
  *
  * @param[out] busy 	False if transaction in flight or error
  * @return				0 or error
  */
-lt7822_err_t lt7822_spi_ready( bool* ready );
+int lt7822_spi_ready( bool* ready );
 
 /**
  * Begin SPI transaction.
@@ -89,7 +87,7 @@ lt7822_err_t lt7822_spi_ready( bool* ready );
  * @param[in] address		Address for DR or DW, ignored if SQ
  * @return					0 or error
  */
-lt7822_err_t lt7822_spi_transact(
+int lt7822_spi_transact(
 	enum lt7822_command		  kind,
 	lt7822_status_register_t* status,
 	uint32_t*				  data,

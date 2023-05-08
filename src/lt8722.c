@@ -93,13 +93,13 @@ static uint8_t calc_crc( uint8_t* buffer, size_t len )
 	return result;
 }
 
-lt7822_err_t lt7822_spi_ready( bool* ready )
+int lt7822_spi_ready( bool* ready )
 {
 	*ready = spi_is_ready_dt( &spec );
 	return 0;
 }
 
-static lt7822_err_t transceive( uint8_t ack, uint8_t crc )
+static int transceive( uint8_t ack, uint8_t crc )
 {
 	static struct spi_buf	  tx_buf = { .buf = mosi_buffer, .len = 0 };
 	static struct spi_buf	  rx_buf = { .buf = miso_buffer, .len = 0 };
@@ -132,7 +132,7 @@ static lt7822_err_t transceive( uint8_t ack, uint8_t crc )
 	return 0;
 }
 
-lt7822_err_t lt7822_spi_transact(
+int lt7822_spi_transact(
 	enum lt7822_command		  kind,
 	lt7822_status_register_t* status,
 	uint32_t*				  data,
