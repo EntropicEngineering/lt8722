@@ -34,13 +34,6 @@
  * terminals at VIN/2, the inrush current through the output load is greatly
  * minimized. After the PWM driver switching activity is enabled, keep the
  * output voltage control DAC (SPIS_DAC) code unchanged for a minimum of 160μs.
- *
- * Finally, the output voltage control DAC (SPIS_DAC) code can be stepped in
- * a controlled manner to the desired code. The LDR and SFB outputs will
- * begin to diverge from one another until the desired differential voltage
- * is developed across the output load, the differential output voltage
- * reaches the preset voltage limit, or the output current reaches the preset
- * current limit.
  */
 int startup_sequence( void )
 {
@@ -87,12 +80,13 @@ int startup_sequence( void )
 			(uint32_t) status );
 		return err;
 	}
-	// TODO: Wait ~1ms
+	(void) k_sleep( K_MSEC(1));
 
 	/// Fifth
 	// 256 steps over 5+ ms
 #define TIMEOUT K_USEC( DIV_ROUND_UP( 5000, 256 ) )
-	for ( reg = 0xFF000000; reg > 0; reg -= 0x01000000 )
+	// reg will overflow to 0x0, only works for uint32.
+	for ( reg = 0xFF000000; reg > 0; reg += 0x10000 )
 	{
 		err = lt8722_spi_transact(
 			LT8722_DATA_WRITE, &status, &reg, LT8722_SPIS_DAC );
@@ -104,7 +98,7 @@ int startup_sequence( void )
 				(uint32_t) status );
 			return err;
 		}
-		(void) k_sleep(TIMEOUT);
+		(void) k_sleep( TIMEOUT );
 	}
 
 	/// Sixth
@@ -121,9 +115,26 @@ int startup_sequence( void )
 			(uint32_t) status );
 		return err;
 	}
-	(void) k_sleep( K_USEC(200));	// Minimum of 160
+	(void) k_sleep( K_USEC( 200 ) );  // Minimum of 160, 32 x 5 µs
 
+
+	// TODO: Set switching freq to 3 MHz
+	// TODO: Set SW_VC_INT to 0b011
 	return 0;
+}
+
+/**
+ * Finally, the output voltage control DAC (SPIS_DAC) code can be stepped in
+ * a controlled manner to the desired code. The LDR and SFB outputs will
+ * begin to diverge from one another until the desired differential voltage
+ * is developed across the output load, the differential output voltage
+ * reaches the preset voltage limit, or the output current reaches the preset
+ * current limit.
+ */
+uint32_t dac_ramp_delay_us = 20;  // TODO: expose to shell
+int		 set_dac( uint32_t value )
+{
+	uint32_t
 }
 
 int main( void )
