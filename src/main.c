@@ -43,10 +43,10 @@
  */
 int startup_sequence( void )
 {
-	lt7822_status_register_t status;
+	lt8722_status_register_t status;
 	uint32_t				 reg = 0;
 
-	err = lt7822_spi_ready( &ready );
+	err = lt8722_spi_ready( &ready );
 	if ( err )
 	{
 		printk( "SPI device not ready\n" );
@@ -55,10 +55,10 @@ int startup_sequence( void )
 
 	// Second
 	// TODO: Set EN high
-	( (lt7822_command_register_t*) &reg )->ENABLE_REQ = 1;
+	( (lt8722_command_register_t*) &reg )->ENABLE_REQ = 1;
 
-	err = lt7822_spi_transact(
-		LT7822_DATA_WRITE, &status, &reg, LT7822_SPIS_COMMAND );
+	err = lt8722_spi_transact(
+		LT8722_DATA_WRITE, &status, &reg, LT8722_SPIS_COMMAND );
 	// TODO: Check status
 	if ( err )
 	{
@@ -70,8 +70,8 @@ int startup_sequence( void )
 
 	// Third
 	reg = 0xFF000000;
-	err = lt7822_spi_transact(
-		LT7822_DATA_WRITE, &status, &reg, LT7822_SPIS_DAC );
+	err = lt8722_spi_transact(
+		LT8722_DATA_WRITE, &status, &reg, LT8722_SPIS_DAC );
 	// TODO: Check status
 	if ( err )
 	{
@@ -83,8 +83,8 @@ int startup_sequence( void )
 
 	// Fourth
 	reg = 0;
-	err = lt7822_spi_transact(
-		LT7822_DATA_WRITE, &status, &reg, LT7822_SPIS_STATUS );
+	err = lt8722_spi_transact(
+		LT8722_DATA_WRITE, &status, &reg, LT8722_SPIS_STATUS );
 	// TODO: Check status
 	if ( err )
 	{
@@ -96,7 +96,6 @@ int startup_sequence( void )
 	// TODO: Wait ~1ms
 
 	// Fifth
-	
 
 	return 0;
 }
@@ -106,14 +105,14 @@ int main( void )
 	uint32_t				 err;
 	bool					 ready;
 	uint32_t				 data = 0;
-	lt7822_status_register_t status;
+	lt8722_status_register_t status;
 
-	err = lt7822_spi_ready( &ready );
+	err = lt8722_spi_ready( &ready );
 	if ( err )
 		return err;
 
-	err = lt7822_spi_transact(
-		LT7822_DATA_READ, &status, &data, LT7822_SPIS_DAC );
+	err = lt8722_spi_transact(
+		LT8722_DATA_READ, &status, &data, LT8722_SPIS_DAC );
 
 	return err;
 }

@@ -4,39 +4,39 @@
  * Copyright (c) 2023 Entropic Engineering. All rights reserved.
  */
 
-#ifndef LT7822_LT8722_H
-#define LT7822_LT8722_H
+#ifndef LT8722_LT8722_H
+#define LT8722_LT8722_H
 
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
 
-enum lt7822_command {
-	LT7822_STATUS_ACQUISITION = 0x00,
-	LT7822_SQ				  = LT7822_STATUS_ACQUISITION,
-	LT7822_DATA_WRITE		  = 0x02,
-	LT7822_DW				  = LT7822_DATA_WRITE,
-	LT7822_DATA_READ		  = 0x04,
-	LT7822_DR				  = LT7822_DATA_READ
+enum lt8722_command {
+	LT8722_STATUS_ACQUISITION = 0x00,
+	LT8722_SQ				  = LT8722_STATUS_ACQUISITION,
+	LT8722_DATA_WRITE		  = 0x02,
+	LT8722_DW				  = LT8722_DATA_WRITE,
+	LT8722_DATA_READ		  = 0x04,
+	LT8722_DR				  = LT8722_DATA_READ
 };
 
-enum lt7822_spi_address {
-	LT7822_SPIS_COMMAND	  = 0x00,
-	LT7822_SPIS_STATUS	  = 0x01,
-	LT7822_SPIS_DAC_ILIMN = 0x02,
-	LT7822_SPIS_DAC_ILIMP = 0x03,
-	LT7822_SPIS_DAC		  = 0x04,
-	LT7822_SPIS_OV_CLAMP  = 0x05,
-	LT7822_SPIS_UV_CLAMP  = 0x06,
-	LT7822_SPIS_AMUX	  = 0x07,
+enum lt8722_spi_address {
+	LT8722_SPIS_COMMAND	  = 0x00,
+	LT8722_SPIS_STATUS	  = 0x01,
+	LT8722_SPIS_DAC_ILIMN = 0x02,
+	LT8722_SPIS_DAC_ILIMP = 0x03,
+	LT8722_SPIS_DAC		  = 0x04,
+	LT8722_SPIS_OV_CLAMP  = 0x05,
+	LT8722_SPIS_UV_CLAMP  = 0x06,
+	LT8722_SPIS_AMUX	  = 0x07,
 };
 
-enum lt7822_acknowledge {
-	LT7822_ACK			 = 0xA5,
-	LT7822_NACK			 = 0xC3,
-	LT7822_BAD_REGISTER	 = 0x0F,
-	LT7822_STUCK_AT_ZERO = 0x00,
-	LT7822_STUCK_AT_ONE	 = 0xFF
+enum lt8722_acknowledge {
+	LT8722_ACK			 = 0xA5,
+	LT8722_NACK			 = 0xC3,
+	LT8722_BAD_REGISTER	 = 0x0F,
+	LT8722_STUCK_AT_ZERO = 0x00,
+	LT8722_STUCK_AT_ONE	 = 0xFF
 };
 
 typedef struct {
@@ -51,7 +51,7 @@ typedef struct {
 	uint32_t SW_FRQ_SET : 3;
 	uint32_t SWEN_REQ	: 1;
 	uint32_t ENABLE_REQ : 1;
-} lt7822_command_register_t;
+} lt8722_command_register_t;
 
 typedef struct {
 	uint32_t Ignored	  : 21;
@@ -66,7 +66,7 @@ typedef struct {
 	uint32_t SRVO_PLIM	  : 1;
 	uint32_t SRVO_ILIM	  : 1;
 	uint32_t SWEN		  : 1;
-} lt7822_status_register_t;
+} lt8722_status_register_t;
 
 /**
  * Determine if SPI is ready and idle.
@@ -74,7 +74,7 @@ typedef struct {
  * @param[out] busy 	False if transaction in flight or error
  * @return				0 or error
  */
-int lt7822_spi_ready( bool* ready );
+int lt8722_spi_ready( bool* ready );
 
 /**
  * Begin SPI transaction.
@@ -87,10 +87,10 @@ int lt7822_spi_ready( bool* ready );
  * @param[in] address		Address for DR or DW, ignored if SQ
  * @return					0 or error
  */
-int lt7822_spi_transact(
-	enum lt7822_command		  kind,
-	lt7822_status_register_t* status,
+int lt8722_spi_transact(
+	enum lt8722_command		  kind,
+	lt8722_status_register_t* status,
 	uint32_t*				  data,
-	enum lt7822_spi_address	  address );
+	enum lt8722_spi_address	  address );
 
-#endif	// LT7822_LT8722_H
+#endif	// LT8722_LT8722_H
