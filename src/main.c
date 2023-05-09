@@ -46,8 +46,7 @@ int startup_sequence( void )
 
 	err = lt8722_spi_transact(
 		LT8722_DATA_WRITE, &status, &reg, LT8722_SPIS_COMMAND );
-	// TODO: Check status
-	if ( err )
+	if ( err || ( status & LT8722_STATUS_FAULT_MASK ) )
 	{
 		printk(
 			"Step 2: failed to set ENABLE_REQ, err: %d, status: %02x\n", err,
@@ -59,8 +58,7 @@ int startup_sequence( void )
 	reg = 0xFF000000;
 	err = lt8722_spi_transact(
 		LT8722_DATA_WRITE, &status, &reg, LT8722_SPIS_DAC );
-	// TODO: Check status
-	if ( err )
+	if ( err || ( status & LT8722_STATUS_FAULT_MASK ) )
 	{
 		printk(
 			"Step 3: failed to set DAC, err: %d, status: %02x\n", err,
@@ -72,33 +70,30 @@ int startup_sequence( void )
 	reg = 0;
 	err = lt8722_spi_transact(
 		LT8722_DATA_WRITE, &status, &reg, LT8722_SPIS_STATUS );
-	// TODO: Check status
-	if ( err )
+	if ( err || ( status & LT8722_STATUS_FAULT_MASK ) )
 	{
 		printk(
-			"Step 4: failed to clear SPIS_STATUS, err: %d, status: %02x\n", err,
+			"Step 4: failed to set DAC, err: %d, status: %02x\n", err,
 			(uint32_t) status );
 		return err;
 	}
-	(void) k_sleep( K_MSEC(1));
+	(void) k_sleep( K_MSEC( 1 ) );
 
 	/// Fifth
-	// 256 steps over 5+ ms
-#define TIMEOUT K_USEC( DIV_ROUND_UP( 5000, 256 ) )
 	// reg will overflow to 0x0, only works for uint32.
 	for ( reg = 0xFF000000; reg > 0; reg += 0x10000 )
 	{
 		err = lt8722_spi_transact(
 			LT8722_DATA_WRITE, &status, &reg, LT8722_SPIS_DAC );
-		// TODO: Check status
-		if ( err )
+		if ( err || ( status & LT8722_STATUS_FAULT_MASK ) )
 		{
 			printk(
-				"Step 5: failed to set DAC, err: %d, status: %02x\n", err,
+				"Step 5 fault or err: %d, status: %02x\n", err,
 				(uint32_t) status );
 			return err;
 		}
-		(void) k_sleep( TIMEOUT );
+		// 256 steps over 5+ ms
+		(void) k_sleep( K_USEC( DIV_ROUND_UP( 5000, 256 ) ) );
 	}
 
 	/// Sixth
@@ -107,16 +102,13 @@ int startup_sequence( void )
 
 	err = lt8722_spi_transact(
 		LT8722_DATA_WRITE, &status, &reg, LT8722_SPIS_COMMAND );
-	// TODO: Check status
-	if ( err )
+	if ( err || ( status & LT8722_STATUS_FAULT_MASK ) )
 	{
 		printk(
-			"Step 6: failed to set SWEN_REQ, err: %d, status: %02x\n", err,
-			(uint32_t) status );
+			"Step 6 fault or err: %d, status: %02x\n", err, (uint32_t) status );
 		return err;
 	}
 	(void) k_sleep( K_USEC( 200 ) );  // Minimum of 160, 32 x 5 µs
-
 
 	// TODO: Set switching freq to 3 MHz
 	// TODO: Set SW_VC_INT to 0b011

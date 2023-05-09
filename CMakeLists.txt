@@ -22,7 +22,7 @@ find_package(Zephyr HINTS $ENV{ZEPHYR_BASE})
 
 set(CMAKE_BUILD_TYPE ZDebug)
 
-project(lt7822)
+project(lt8722)
 
 zephyr_library_compile_options(-std=gnu17)
 

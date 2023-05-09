@@ -7,9 +7,7 @@
 #ifndef LT8722_LT8722_H
 #define LT8722_LT8722_H
 
-#include <stdint.h>
-#include <stddef.h>
-#include <stdbool.h>
+#include <zephyr/sys/util.h>
 
 enum lt8722_command {
 	LT8722_STATUS_ACQUISITION = 0x00,
@@ -67,6 +65,9 @@ typedef struct {
 	uint32_t SRVO_ILIM	  : 1;
 	uint32_t SWEN		  : 1;
 } lt8722_status_register_t;
+
+#define LT8722_STATUS_RESET_MASK BIT(4)
+#define LT8722_STATUS_FAULT_MASK GENMASK(10, 5)
 
 /**
  * Determine if SPI is ready and idle.
