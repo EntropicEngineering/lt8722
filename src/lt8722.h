@@ -66,16 +66,15 @@ typedef struct {
 	uint32_t SWEN		  : 1;
 } lt8722_status_register_t;
 
-#define LT8722_STATUS_RESET_MASK BIT(4)
-#define LT8722_STATUS_FAULT_MASK GENMASK(10, 5)
+#define LT8722_STATUS_RESET_MASK BIT( 4 )
+#define LT8722_STATUS_FAULT_MASK GENMASK( 10, 5 )
 
 /**
- * Determine if SPI is ready and idle.
+ * Ensure device drivers are ready.
  *
- * @param[out] busy 	False if transaction in flight or error
  * @return				0 or error
  */
-int lt8722_spi_ready( bool* ready );
+int lt8722_init( void );
 
 /**
  * Begin SPI transaction.
@@ -93,5 +92,7 @@ int lt8722_spi_transact(
 	lt8722_status_register_t* status,
 	uint32_t*				  data,
 	enum lt8722_spi_address	  address );
+
+int lt8722_soft_start( void );
 
 #endif	// LT8722_LT8722_H

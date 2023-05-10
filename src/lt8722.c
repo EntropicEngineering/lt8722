@@ -39,14 +39,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "lt8722.h"
 
-#include <errno.h>
 #include <stdint.h>
 #include <zephyr/device.h>
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/spi.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
-
-#define SPI_NODE DT_NODELABEL( spi1 )
 
 #define LT8722_SPI_MODE			0
 #define LT8722_DATA_XFER_SIZE	8
@@ -76,12 +74,20 @@ static const uint8_t CRC_8_TABLE[256] = {
 	0xDE, 0xD9, 0xD0, 0xD7, 0xC2, 0xC5, 0xCC, 0xCB, 0xE6, 0xE1, 0xE8, 0xEF,
 	0xFA, 0xFD, 0xF4, 0xF3 };
 
-static struct spi_dt_spec spec = {
-	.bus = DEVICE_DT_GET( SPI_NODE ),
-	.config =
-		SPI_CONFIG_DT( SPI_NODE, SPI_OP_MODE_MASTER | SPI_WORD_SET( 8 ), 0 ) };
-static uint8_t mosi_buffer[LT8722_DATA_XFER_SIZE] = { 0 };
-static uint8_t miso_buffer[LT8722_DATA_XFER_SIZE] = { 0 };
+static struct spi_dt_spec spi_spec = {
+	.bus	= DEVICE_DT_GET( DT_NODELABEL( lt8722_spi ) ),
+	.config = SPI_CONFIG_DT(
+		DT_NODELABEL( lt8722_spi ),
+		SPI_OP_MODE_MASTER | SPI_WORD_SET( 8 ),
+		0 ) };
+static const struct gpio_dt_spec EN_pin_dt =
+	GPIO_DT_SPEC_GET( DT_NODELABEL( EN_pin ), gpios );
+static uint8_t			  mosi_buffer[LT8722_DATA_XFER_SIZE] = { 0 };
+static uint8_t			  miso_buffer[LT8722_DATA_XFER_SIZE] = { 0 };
+static struct spi_buf	  tx_buf = { .buf = mosi_buffer, .len = 0 };
+static struct spi_buf	  rx_buf = { .buf = miso_buffer, .len = 0 };
+static struct spi_buf_set tx_set = { .buffers = &tx_buf, .count = 1 };
+static struct spi_buf_set rx_set = { .buffers = &rx_buf, .count = 1 };
 
 static uint8_t calc_crc( uint8_t* buffer, size_t len )
 {
@@ -93,21 +99,29 @@ static uint8_t calc_crc( uint8_t* buffer, size_t len )
 	return result;
 }
 
-int lt8722_spi_ready( bool* ready )
+int lt8722_init( void )
 {
-	*ready = spi_is_ready_dt( &spec );
+	if ( ! gpio_is_ready_dt( &EN_pin_dt ) )
+	{
+		printk( "GPIO driver not ready\n" );
+		return -1;
+	}
+
+	// TODO: Configure SWEN_pin
+
+	if ( ! spi_is_ready_dt( &spi_spec ) )
+	{
+		printk( "SPI driver not ready\n" );
+		return -1;
+	}
 	return 0;
 }
 
 static int transceive( uint8_t ack, uint8_t crc )
 {
-	static struct spi_buf	  tx_buf = { .buf = mosi_buffer, .len = 0 };
-	static struct spi_buf	  rx_buf = { .buf = miso_buffer, .len = 0 };
-	static struct spi_buf_set tx_set = { .buffers = &tx_buf, .count = 1 };
-	static struct spi_buf_set rx_set = { .buffers = &rx_buf, .count = 1 };
-	int						  r;
+	int r;
 
-	r = spi_transceive_dt( &spec, &tx_set, &rx_set );
+	r = spi_transceive_dt( &spi_spec, &tx_set, &rx_set );
 	if ( r )
 	{
 		printk( "Transceive error: %d\n", -r );
@@ -188,4 +202,122 @@ int lt8722_spi_transact(
 	( (uint8_t*) status )[0] = miso_buffer[1];
 	( (uint8_t*) status )[1] = miso_buffer[0];
 	return err;
+}
+
+/**
+ * First, apply proper VIN and VDDIO voltages to the LT8722.
+ *
+ * Second, enable the VCC LDO and other LT8722 circuitry by raising the EN pin
+ * above the 0.74V threshold and writing the ENABLE_REQ bit to a 1.
+ *
+ * Third, configure the output voltage control DAC (SPIS_DAC) to 0xFF000000.
+ * This code will force the LDR pin to GND when the linear power stage is
+ * later enabled.
+ *
+ * Fourth, write all SPIS_STATUS registers to 0. This clears all faults and
+ * allows the linear power stage to be enabled. Due to the actions in the
+ * prior step, when the linear power stage turns on in this step, the output
+ * load will be discharged to GND. Pause between this step and the next for
+ * ~1 ms to allow any prebiased out- put condition to dissipate.
+ *
+ * Fifth, ramp the output voltage control DAC (SPIS_DAC) from code 0xFF000000
+ * to code 0x00000000 in a controlled manner so that the linear driver output
+ * (LDR) ramps from GND to VIN/2. During this ramping period, both the PWM
+ * driver output (SFB) and linear driver output (LDR) move together to VIN/2.
+ * The ramp time for this controlled movement to VIN/2 should be a minimum of
+ * 5 ms.
+ *
+ * Sixth, enable the PWM switching behavior by raising the SWEN pin above the
+ * 1.2V (typ) threshold and writing the SWEN_REQ bit to a 1. With both output
+ * terminals at VIN/2, the inrush current through the output load is greatly
+ * minimized. After the PWM driver switching activity is enabled, keep the
+ * output voltage control DAC (SPIS_DAC) code unchanged for a minimum of 160μs.
+ */
+int lt8722_soft_start( void )
+{
+	uint32_t volatile status;
+	lt8722_status_register_t* p_status = (lt8722_status_register_t*) &status;
+
+	uint32_t reg = 0;
+	int		 err;
+
+	/// Second
+	err = gpio_pin_configure_dt( &EN_pin_dt, GPIO_OUTPUT_ACTIVE );
+	if ( err )
+	{
+		printk( "Step 2: failed to enable EN pin, err: %d\n", err );
+		return err;
+	}
+
+	( (lt8722_command_register_t*) &reg )->ENABLE_REQ = 1;
+
+	err = lt8722_spi_transact(
+		LT8722_DATA_WRITE, p_status, &reg, LT8722_SPIS_COMMAND );
+	if ( err || (uint32_t) ( status & LT8722_STATUS_FAULT_MASK ) )
+	{
+		printk(
+			"Step 2: failed to set ENABLE_REQ, err: %d, status: %02x\n", err,
+			 status );
+		return err;
+	}
+
+	/// Third
+	reg = 0xFF000000;
+	err = lt8722_spi_transact(
+		LT8722_DATA_WRITE, p_status, &reg, LT8722_SPIS_DAC );
+	if ( err || (uint32_t) ( status & LT8722_STATUS_FAULT_MASK ) )
+	{
+		printk(
+			"Step 3: failed to set DAC, err: %d, status: %02x\n", err,
+			 status );
+		return err;
+	}
+
+	/// Fourth
+	reg = 0;
+	err = lt8722_spi_transact(
+		LT8722_DATA_WRITE, p_status, &reg, LT8722_SPIS_STATUS );
+	if ( err || (uint32_t) ( status & LT8722_STATUS_FAULT_MASK ) )
+	{
+		printk(
+			"Step 4: failed to set DAC, err: %d, status: %02x\n", err,
+			 status );
+		return err;
+	}
+	(void) k_sleep( K_MSEC( 1 ) );
+
+	/// Fifth
+	// reg will overflow to 0x0, only works for uint32.
+	for ( reg = 0xFF000000; reg > 0; reg += 0x10000 )
+	{
+		err = lt8722_spi_transact(
+			LT8722_DATA_WRITE, p_status, &reg, LT8722_SPIS_DAC );
+		if ( err || (uint32_t) ( status & LT8722_STATUS_FAULT_MASK ) )
+		{
+			printk(
+				"Step 5 fault or err: %d, status: %02x\n", err,
+				 status );
+			return err;
+		}
+		// 256 steps over 5+ ms
+		(void) k_sleep( K_USEC( DIV_ROUND_UP( 5000, 256 ) ) );
+	}
+
+	/// Sixth
+	// TODO: Pull SWEN high
+	( (lt8722_command_register_t*) &reg )->SWEN_REQ = 1;
+
+	err = lt8722_spi_transact(
+		LT8722_DATA_WRITE, p_status, &reg, LT8722_SPIS_COMMAND );
+	if ( err || (uint32_t) ( status & LT8722_STATUS_FAULT_MASK ) )
+	{
+		printk(
+			"Step 6 fault or err: %d, status: %02x\n", err,  status );
+		return err;
+	}
+	(void) k_sleep( K_USEC( 200 ) );  // Minimum of 160, 32 x 5 µs
+
+	// TODO: Set switching freq to 500 KHz
+	// TODO: Set SW_VC_INT to 0b011
+	return 0;
 }
