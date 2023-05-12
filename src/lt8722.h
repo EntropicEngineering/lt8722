@@ -7,6 +7,7 @@
 #ifndef LT8722_LT8722_H
 #define LT8722_LT8722_H
 
+#include <cstdint>
 #include <zephyr/sys/util.h>
 
 enum lt8722_command {
@@ -38,36 +39,42 @@ enum lt8722_acknowledge {
 };
 
 typedef struct {
-	uint32_t Ignored	: 13;
-	uint32_t PWR_LIM	: 4;
-	uint32_t SPI_RST	: 1;
-	uint32_t SW_VC_INT	: 3;
-	uint32_t Unused		: 1;  // Must be zero
-	uint32_t VCC_VREG	: 1;
-	uint32_t SYS_DC		: 2;
-	uint32_t SW_FRQ_ADJ : 2;
-	uint32_t SW_FRQ_SET : 3;
-	uint32_t SWEN_REQ	: 1;
-	uint32_t ENABLE_REQ : 1;
+	uint32_t /* Ignored */ : 13;
+	uint32_t PWR_LIM	   : 4;
+	uint32_t SPI_RST	   : 1;
+	uint32_t SW_VC_INT	   : 3;
+	uint32_t /* Unused */  : 1;	 // Must be zero
+	uint32_t VCC_VREG	   : 1;
+	uint32_t SYS_DC		   : 2;
+	uint32_t SW_FRQ_ADJ	   : 2;
+	uint32_t SW_FRQ_SET	   : 3;
+	uint32_t SWEN_REQ	   : 1;
+	uint32_t ENABLE_REQ	   : 1;
 } lt8722_command_register_t;
 
-typedef struct {
-	uint32_t Ignored	  : 21;
-	uint32_t V2P5_UVLO	  : 1;
-	uint32_t CP_UVLO	  : 1;
-	uint32_t VDDIO_UVLO	  : 1;
-	uint32_t VCC_UVLO	  : 1;
-	uint32_t TSD		  : 1;
-	uint32_t OVER_CURRENT : 1;
-	uint32_t POR_OCC	  : 1;
-	uint32_t MIN_OT		  : 1;
-	uint32_t SRVO_PLIM	  : 1;
-	uint32_t SRVO_ILIM	  : 1;
-	uint32_t SWEN		  : 1;
+typedef union {
+	struct {
+		uint32_t /* Ignored	*/ : 21;
+		uint32_t V2P5_UVLO	   : 1;
+		uint32_t CP_UVLO	   : 1;
+		uint32_t VDDIO_UVLO	   : 1;
+		uint32_t VCC_UVLO	   : 1;
+		uint32_t TSD		   : 1;
+		uint32_t OVER_CURRENT  : 1;
+		uint32_t POR_OCC	   : 1;
+		uint32_t MIN_OT		   : 1;
+		uint32_t SRVO_PLIM	   : 1;
+		uint32_t SRVO_ILIM	   : 1;
+		uint32_t SWEN		   : 1;
+	};
+	uint32_t bits;
 } lt8722_status_register_t;
 
 #define LT8722_STATUS_RESET_MASK BIT( 4 )
 #define LT8722_STATUS_FAULT_MASK GENMASK( 10, 5 )
+
+#define LT8722_DAC_MIN	((int32_t) -(1 << 24))
+#define LT8722_DAC_MAX	((int32_t) (1 << 24) - 1)
 
 /**
  * Ensure device drivers are ready.
@@ -93,6 +100,23 @@ int lt8722_spi_transact(
 	uint32_t*				  data,
 	enum lt8722_spi_address	  address );
 
-int lt8722_soft_start( void );
+/**
+ * Start the output while limiting inrush current
+ *
+ * @param dac_init 		Initial value to set DAC
+ * @return
+ */
+int lt8722_soft_start( int32_t dac_init );
+
+/**
+ * Set DAC value.
+ *
+ * V_OUT = 16 * value * 2.5 V / 2**25
+ * V_OUT is clamped between +V_IN to almost -V_IN.
+ *
+ * @param value		value in the range LT8722_DAC_MIN to LT8722_DAC_MAX
+ * @return 			0 or error
+ */
+int lt8722_set_dac( int32_t value );
 
 #endif	// LT8722_LT8722_H

@@ -39,7 +39,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "lt8722.h"
 
-#include <stdint.h>
+#include <cstdint>
 #include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/spi.h>
@@ -118,6 +118,7 @@ static int transceive( uint8_t ack, uint8_t crc )
 
 int lt8722_init( void )
 {
+	int err;
 	if ( ! gpio_is_ready_dt( &EN_pin_dt ) )
 	{
 		printk( "GPIO driver not ready\n" );
@@ -214,7 +215,7 @@ int lt8722_spi_transact(
  * Second, enable the VCC LDO and other LT8722 circuitry by raising the EN pin
  * above the 0.74V threshold and writing the ENABLE_REQ bit to a 1.
  *
- * Third, configure the output voltage control DAC (SPIS_DAC) to 0xFF000000.
+ * Third, configure the output voltage control DAC (SPIS_DAC) to 0xFF000000 [LT8722_DAC_MIN].
  * This code will force the LDR pin to GND when the linear power stage is
  * later enabled.
  *
@@ -222,9 +223,9 @@ int lt8722_spi_transact(
  * allows the linear power stage to be enabled. Due to the actions in the
  * prior step, when the linear power stage turns on in this step, the output
  * load will be discharged to GND. Pause between this step and the next for
- * ~1 ms to allow any prebiased out- put condition to dissipate.
+ * ~1 ms to allow any prebiased output condition to dissipate.
  *
- * Fifth, ramp the output voltage control DAC (SPIS_DAC) from code 0xFF000000
+ * Fifth, ramp the output voltage control DAC (SPIS_DAC) from code 0xFF000000 [LT8722_DAC_MIN]
  * to code 0x00000000 in a controlled manner so that the linear driver output
  * (LDR) ramps from GND to VIN/2. During this ramping period, both the PWM
  * driver output (SFB) and linear driver output (LDR) move together to VIN/2.
@@ -236,11 +237,17 @@ int lt8722_spi_transact(
  * terminals at VIN/2, the inrush current through the output load is greatly
  * minimized. After the PWM driver switching activity is enabled, keep the
  * output voltage control DAC (SPIS_DAC) code unchanged for a minimum of 160μs.
+ *
+ * Finally, the output voltage control DAC (SPIS_DAC) code can be stepped in
+ * a controlled manner to the desired code. The LDR and SFB outputs will
+ * begin to diverge from one another until the desired differential voltage
+ * is developed across the output load, the differential output voltage
+ * reaches the preset voltage limit, or the output current reaches the preset
+ * current limit.
  */
-int lt8722_soft_start( void )
+int lt8722_soft_start( int32_t dac_init )
 {
-	uint32_t volatile status;
-	lt8722_status_register_t* p_status = (lt8722_status_register_t*) &status;
+	lt8722_status_register_t status;
 
 	uint32_t reg = 0;
 	int		 err;
@@ -254,53 +261,55 @@ int lt8722_soft_start( void )
 	}
 
 	// Retrieve current command register values
-	err = lt8722_spi_transact( LT8722_DATA_READ, p_status, &reg, LT8722_SPIS_COMMAND );
-	if ( err || (uint32_t) ( status & LT8722_STATUS_FAULT_MASK ) )
+	err = lt8722_spi_transact( LT8722_DATA_READ, &status, &reg, LT8722_SPIS_COMMAND );
+	if ( err || ( status.bits & LT8722_STATUS_FAULT_MASK ) )
 	{
-		printk( "Step 2: failed to read command register, err: %d, status: %02x\n", err, status );
+		printk( "Step 2: failed to read command register, err: %d, status: %02x\n", err, status.bits );
 		return err;
 	}
 	// Set enable bit
 	( (lt8722_command_register_t*) &reg )->ENABLE_REQ = 1;
 	// Write updated command register values
-	err = lt8722_spi_transact( LT8722_DATA_WRITE, p_status, &reg, LT8722_SPIS_COMMAND );
-	if ( err || (uint32_t) ( status & LT8722_STATUS_FAULT_MASK ) )
+	err = lt8722_spi_transact( LT8722_DATA_WRITE, &status, &reg, LT8722_SPIS_COMMAND );
+	if ( err || ( status.bits & LT8722_STATUS_FAULT_MASK ) )
 	{
-		printk( "Step 2: failed to set ENABLE_REQ, err: %d, status: %02x\n", err, status );
+		printk( "Step 2: failed to set ENABLE_REQ, err: %d, status: %02x\n", err, status.bits );
 		return err;
 	}
 
 	/// Third
 	reg = 0xFF000000;
-	err = lt8722_spi_transact( LT8722_DATA_WRITE, p_status, &reg, LT8722_SPIS_DAC );
-	if ( err || (uint32_t) ( status & LT8722_STATUS_FAULT_MASK ) )
+	err = lt8722_spi_transact( LT8722_DATA_WRITE, &status, &reg, LT8722_SPIS_DAC );
+	if ( err || ( status.bits & LT8722_STATUS_FAULT_MASK ) )
 	{
-		printk( "Step 3: failed to set DAC, err: %d, status: %02x\n", err, status );
+		printk( "Step 3: failed to set DAC, err: %d, status: %02x\n", err, status.bits );
 		return err;
 	}
 
 	/// Fourth
 	reg = 0;
-	err = lt8722_spi_transact( LT8722_DATA_WRITE, p_status, &reg, LT8722_SPIS_STATUS );
-	if ( err || (uint32_t) ( status & LT8722_STATUS_FAULT_MASK ) )
+	err = lt8722_spi_transact( LT8722_DATA_WRITE, &status, &reg, LT8722_SPIS_STATUS );
+	if ( err || ( status.bits & LT8722_STATUS_FAULT_MASK ) )
 	{
-		printk( "Step 4: failed to set DAC, err: %d, status: %02x\n", err, status );
+		printk( "Step 4: failed to set DAC, err: %d, status: %02x\n", err, status.bits );
 		return err;
 	}
 	(void) k_sleep( K_MSEC( 1 ) );
 
 	/// Fifth
-	// reg will overflow to 0x0, only works for uint32.
-	for ( reg = 0xFF000000; reg > 0; reg += 0x10000 )
+	// Ramp from LT8722_DAC_MIN to zero over 5 ms.
+#define RAMP_STEPS	  256
+#define RAMP_INTERVAL ( -LT8722_DAC_MIN / RAMP_STEPS )
+#define RAMP_DELAY	  ( DIV_ROUND_UP( 5000, RAMP_STEPS ) )
+	for ( (int32_t) reg = LT8722_DAC_MIN; (int32_t) reg < 0; ( (int32_t) reg ) += RAMP_INTERVAL )
 	{
-		err = lt8722_spi_transact( LT8722_DATA_WRITE, p_status, &reg, LT8722_SPIS_DAC );
-		if ( err || (uint32_t) ( status & LT8722_STATUS_FAULT_MASK ) )
+		err = lt8722_spi_transact( LT8722_DATA_WRITE, &status, &reg, LT8722_SPIS_DAC );
+		if ( err || ( status.bits & LT8722_STATUS_FAULT_MASK ) )
 		{
-			printk( "Step 5 fault or err: %d, status: %02x\n", err, status );
+			printk( "Step 5 fault or err: %d, status: %02x\n", err, status.bits );
 			return err;
 		}
-		// 256 steps over 5+ ms
-		(void) k_sleep( K_USEC( DIV_ROUND_UP( 5000, 256 ) ) );
+		(void) k_sleep( K_USEC( RAMP_DELAY ) );
 	}
 
 	/// Sixth
@@ -319,33 +328,53 @@ int lt8722_soft_start( void )
 	}
 
 	// Retrieve current command register values
-	err = lt8722_spi_transact( LT8722_DATA_READ, p_status, &reg, LT8722_SPIS_COMMAND );
-	if ( err || (uint32_t) ( status & LT8722_STATUS_FAULT_MASK ) )
+	reg = 0;
+	err = lt8722_spi_transact( LT8722_DATA_READ, &status, &reg, LT8722_SPIS_COMMAND );
+	if ( err || ( status.bits & LT8722_STATUS_FAULT_MASK ) )
 	{
-		printk( "Step 6: failed to read command register, err: %d, status: %02x\n", err, status );
+		printk( "Step 6: failed to read command register, err: %d, status: %02x\n", err, status.bits );
 		return err;
 	}
 	// Set switching enable bit
 	( (lt8722_command_register_t*) &reg )->SWEN_REQ = 1;
 	// Write updated command register values
-	err = lt8722_spi_transact( LT8722_DATA_WRITE, p_status, &reg, LT8722_SPIS_COMMAND );
-	if ( err || (uint32_t) ( status & LT8722_STATUS_FAULT_MASK ) )
+	err = lt8722_spi_transact( LT8722_DATA_WRITE, &status, &reg, LT8722_SPIS_COMMAND );
+	if ( err || (uint32_t) ( status.bits & LT8722_STATUS_FAULT_MASK ) )
 	{
-		printk( "Step 6 fault or err: %d, status: %02x\n", err, status );
+		printk( "Step 6 fault or err: %d, status: %02x\n", err, status.bits );
 		return err;
 	}
-	(void) k_sleep( K_USEC( 200 ) );  // Minimum of 160, 32 x 5 µs
+	// Minimum of 160, 32 x 5 µs
+	(void) k_sleep( K_USEC( 200 ) );
 
-  	/// PWM config
+	/// PWM config
 	// reg still contains current command register values
 	( (lt8722_command_register_t*) &reg )->SW_FRQ_SET = 0b001;	// 1 MHz PWM frequency
-	( (lt8722_command_register_t*) &reg )->SYS_DC	  = 0b11;	// 10-90% duty cycle range, min on/off is 5% of pulse
-	( (lt8722_command_register_t*) &reg )->SW_VC_INT  = 0b011;	// Init peak inductor current of ~1.25
+	( (lt8722_command_register_t*) &reg )->SW_FRQ_ADJ = 0b01;	// +15% PWM frequency
+	( (lt8722_command_register_t*) &reg )->SYS_DC	  = 0b10;	// 10-90% duty cycle range, min on/off is 6% of pulse
+	( (lt8722_command_register_t*) &reg )->SW_VC_INT  = 0b111;	// Init peak inductor current of ~2.6, V_IN @ 12 V
 	// Write updated command register values
-	err = lt8722_spi_transact( LT8722_DATA_WRITE, p_status, &reg, LT8722_SPIS_COMMAND );
-	if ( err || (uint32_t) ( status & LT8722_STATUS_FAULT_MASK ) )
+	err = lt8722_spi_transact( LT8722_DATA_WRITE, &status, &reg, LT8722_SPIS_COMMAND );
+	if ( err || ( status.bits & LT8722_STATUS_FAULT_MASK ) )
 	{
-		printk( "PWM config fault or err: %d, status: %02x\n", err, status );
+		printk( "PWM config fault or err: %d, status: %02x\n", err, status.bits );
+		return err;
+	}
+
+	// TODO: Set DAC to dac_init
+	return 0;
+}
+
+int lt8722_set_dac( int32_t value )
+{
+	int32_t					 current;
+	lt8722_status_register_t status;
+	int						 err;
+
+	err = lt8722_spi_transact( LT8722_DATA_READ, &status, (uint32_t*) &current, LT8722_SPIS_DAC );
+	if ( err || ( status.bits & LT8722_STATUS_FAULT_MASK ) )
+	{
+		printk( "Failed to retrieve current DAC value; err: %d, status: %02x\n", err, status.bits );
 		return err;
 	}
 
