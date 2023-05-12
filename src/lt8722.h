@@ -7,7 +7,6 @@
 #ifndef LT8722_LT8722_H
 #define LT8722_LT8722_H
 
-#include <cstdint>
 #include <zephyr/sys/util.h>
 
 enum lt8722_command {
@@ -103,20 +102,13 @@ int lt8722_spi_transact(
 /**
  * Start the output while limiting inrush current
  *
- * @param dac_init 		Initial value to set DAC
- * @return
- */
-int lt8722_soft_start( int32_t dac_init );
-
-/**
- * Set DAC value.
- *
- * V_OUT = 16 * value * 2.5 V / 2**25
+ * V_OUT = 16 * dac_init * 2.5 V / 2**25
  * V_OUT is clamped between +V_IN to almost -V_IN.
  *
- * @param value		value in the range LT8722_DAC_MIN to LT8722_DAC_MAX
- * @return 			0 or error
+ * @param[in] dac_init 	Initial value to set DAC
+ * 						Must be in range LT8722_DAC_MIN to LT8722_DAC_MAX
+ * @return				0 or error
  */
-int lt8722_set_dac( int32_t value );
+int lt8722_soft_start( int32_t dac_init );
 
 #endif	// LT8722_LT8722_H

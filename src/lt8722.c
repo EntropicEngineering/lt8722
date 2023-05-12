@@ -39,7 +39,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "lt8722.h"
 
-#include <cstdint>
+#include <stdlib.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/spi.h>
@@ -248,9 +248,14 @@ int lt8722_spi_transact(
 int lt8722_soft_start( int32_t dac_init )
 {
 	lt8722_status_register_t status;
+	uint32_t				 reg = 0;
+	int						 err;
 
-	uint32_t reg = 0;
-	int		 err;
+	if ( ! IN_RANGE( dac_init, LT8722_DAC_MIN, LT8722_DAC_MAX ) )
+	{
+		printk( "Invalid initial DAC value: %d\n", dac_init );
+		return -1;
+	}
 
 	/// Second
 	err = gpio_pin_set_dt( &EN_pin_dt, true );
@@ -301,7 +306,7 @@ int lt8722_soft_start( int32_t dac_init )
 #define RAMP_STEPS	  256
 #define RAMP_INTERVAL ( -LT8722_DAC_MIN / RAMP_STEPS )
 #define RAMP_DELAY	  ( DIV_ROUND_UP( 5000, RAMP_STEPS ) )
-	for ( (int32_t) reg = LT8722_DAC_MIN; (int32_t) reg < 0; ( (int32_t) reg ) += RAMP_INTERVAL )
+	for ( reg = (uint32_t) LT8722_DAC_MIN; (int32_t) reg < 0; reg = (uint32_t) ( (int32_t) reg + RAMP_INTERVAL ) )
 	{
 		err = lt8722_spi_transact( LT8722_DATA_WRITE, &status, &reg, LT8722_SPIS_DAC );
 		if ( err || ( status.bits & LT8722_STATUS_FAULT_MASK ) )
@@ -361,22 +366,19 @@ int lt8722_soft_start( int32_t dac_init )
 		return err;
 	}
 
-	// TODO: Set DAC to dac_init
-	return 0;
-}
-
-int lt8722_set_dac( int32_t value )
-{
-	int32_t					 current;
-	lt8722_status_register_t status;
-	int						 err;
-
-	err = lt8722_spi_transact( LT8722_DATA_READ, &status, (uint32_t*) &current, LT8722_SPIS_DAC );
-	if ( err || ( status.bits & LT8722_STATUS_FAULT_MASK ) )
+	// DAC is at zero from step 5.
+	// Maintain soft-start ramp rate of 24-bits per 5 ms.
+	int32_t sign = ( dac_init > 0 ) - ( dac_init < 0 );
+	for ( reg = 0; abs( (int32_t) reg ) < abs( dac_init ) - RAMP_INTERVAL;
+		  reg = (uint32_t) ( (int32_t) reg + sign * RAMP_INTERVAL ) )
 	{
-		printk( "Failed to retrieve current DAC value; err: %d, status: %02x\n", err, status.bits );
-		return err;
+		err = lt8722_spi_transact( LT8722_DATA_WRITE, &status, &reg, LT8722_SPIS_DAC );
+		if ( err || ( status.bits & LT8722_STATUS_FAULT_MASK ) )
+		{
+			printk( "Step 5 fault or err: %d, status: %02x\n", err, status.bits );
+			return err;
+		}
+		(void) k_sleep( K_USEC( RAMP_DELAY ) );
 	}
-
 	return 0;
 }
